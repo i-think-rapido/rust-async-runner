@@ -4,8 +4,8 @@ pub mod prelude {
 
 mod runner {
     use std::future::Future;
-    use std::sync::mpsc::sync_channel;
     use std::sync::Arc;
+    use tokio::sync::mpsc::channel;
     use tokio::task;
 
     type Producer<In> = Arc<dyn (Fn() -> ProducerResult<In>) + Send + Sync>;
@@ -46,7 +46,7 @@ mod runner {
         }
 
         pub async fn run(&self) {
-            let (tx, rx) = sync_channel(self.capacity);
+            let (tx, mut rx) = channel(self.capacity);
 
             let producer = self.producer.clone();
             let worker = self.worker.clone();
@@ -54,13 +54,14 @@ mod runner {
                 while let ProducerResult::ContinueWith(value) = producer() {
                     let worker = worker.clone();
                     tx.send(task::spawn(async move { worker(value).await }))
+                        .await
                         .expect("Can't send new spawned worker");
                 }
             });
 
             let consumer = self.consumer.clone();
             let consumer_handler = task::spawn(async move {
-                while let Ok(handler) = rx.recv() {
+                while let Some(handler) = rx.recv().await {
                     consumer(handler.await.unwrap());
                 }
             });
