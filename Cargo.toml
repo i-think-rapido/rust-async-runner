@@ -6,8 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-crossbeam = { version = "0.8.2", features = ["crossbeam-queue"] }
-tokio = "1.35.0"
+tokio = { version = "1.35.0", features = ["rt"] }
 
 [dev-dependencies]
 tokio = { version = "1.35.0", features = ["rt", "rt-multi-thread", "macros"] }
+parking_lot = "0.12.1"
