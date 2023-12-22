@@ -10,7 +10,7 @@ mod runner {
 
     type Producer<In> = Arc<dyn (Fn() -> ProducerResult<In>) + Send + Sync>;
     type Worker<In, Fut> = Arc<dyn (Fn(In) -> Fut) + Send + Sync>;
-    type Consumer<Out> = Arc<dyn Fn(Out) + Send + Sync>;
+    type Consumer<Out> = Arc<dyn Fn(Out) -> anyhow::Result<()> + Send + Sync>;
 
     pub enum ProducerResult<T> {
         ContinueWith(T),
@@ -34,7 +34,7 @@ mod runner {
         where
             P: Fn() -> ProducerResult<In> + Send + Sync + 'static,
             W: Fn(In) -> Fut + Send + Sync + 'static,
-            C: Fn(Out) + Send + Sync + 'static,
+            C: Fn(Out) -> anyhow::Result<()> + Send + Sync + 'static,
             Fut: Future<Output = Out>,
         {
             Self {
@@ -62,7 +62,7 @@ mod runner {
             let consumer = self.consumer.clone();
             let consumer_handler = task::spawn(async move {
                 while let Some(handler) = rx.recv().await {
-                    consumer(handler.await.unwrap());
+                    let _ = consumer(handler.await.unwrap());
                 }
             });
 
@@ -103,6 +103,7 @@ mod test {
             /* consumer */
             move |(idx, item)| {
                 output.write()[idx] = item;
+                Ok(())
             },
         );
 
