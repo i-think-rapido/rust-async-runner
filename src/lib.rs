@@ -35,9 +35,7 @@ mod runner {
             C: Fn(Out) -> anyhow::Result<()> + Send + Sync + 'static,
             Fut: Future<Output = Out>,
             Self: Sized;
-        async fn run(&self)
-        where
-            Self: Send + Sync;
+        async fn run(&self);
     }
 
     impl<In, Out, Fut> Runner<In, Out, Fut>
@@ -71,8 +69,6 @@ mod runner {
             }
         }
         pub async fn run(&self)
-        where
-            Self: Send + Sync,
         {
             self.runner.run().await;
         }
@@ -161,9 +157,9 @@ mod runner {
     mod unordered {
         use std::sync::atomic::AtomicUsize;
 
-        use super::*;
-        use tokio::task::JoinSet;
+        use tokio::{sync::mpsc::unbounded_channel, spawn, task::yield_now};
 
+        use super::*;
         pub struct UnorderedRunner<In, Out, Fut> {
             capacity: usize,
             len: Arc<AtomicUsize>,
@@ -195,42 +191,40 @@ mod runner {
                 }
             }
             async fn run(&self)
-            where
-                Self: Send + Sync,
             {
-                let mut set = JoinSet::new();
+                let (tx, mut rx) = unbounded_channel();
 
-                let r#loop = |
-                        producer: Producer<In>,
-                        worker: Worker<In, Fut>,
-                        set: &mut JoinSet<Out>| {
+                let producer = self.producer.clone();
+                let worker = self.worker.clone();
+                let len = self.len.clone();
+                let capacity = self.capacity;
+                spawn(async move {
                     loop {
-                        if self.len.load(std::sync::atomic::Ordering::Acquire) < self.capacity {
-                            self.len.store(self.len.load(std::sync::atomic::Ordering::Acquire) + 1, std::sync::atomic::Ordering::Relaxed);
+                        if len.load(std::sync::atomic::Ordering::Acquire) < capacity {
+                            len.store(len.load(std::sync::atomic::Ordering::Acquire) + 1, std::sync::atomic::Ordering::Relaxed);
                             match producer() {
                                 ProducerResult::ContinueWith(value) => {
                                     let worker = worker.clone();
-                                    let len = self.len.clone();
-                                    set.spawn(async move { 
+                                    let len = len.clone();
+                                    let tx = tx.clone();
+                                    spawn(async move { 
                                         let out = worker(value).await;
                                         len.store(len.load(std::sync::atomic::Ordering::Acquire) - 1, std::sync::atomic::Ordering::Relaxed);
-                                        out
+                                        let _ = tx.send(out);
                                     });
                                 }
                                 ProducerResult::Terminate => break,
                             }
                         } else {
-                            break;
+                            yield_now().await;
                         }
                     }
-                };
+                });
 
-                r#loop(self.producer.clone(), self.worker.clone(), &mut set);
 
                 let consumer = self.consumer.clone();
-                while let Some(Ok(handler)) = set.join_next().await {
-                    let _ = consumer(handler);
-                    r#loop(self.producer.clone(), self.worker.clone(), &mut set);
+                while let Some(value) = rx.recv().await {
+                    let _ = consumer(value);
                 }
             }
         }
