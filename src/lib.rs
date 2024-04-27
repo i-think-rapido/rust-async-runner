@@ -127,14 +127,14 @@ mod runner {
                             yield_now().await;
                             continue;
                         }
-                        len.store(len.load(std::sync::atomic::Ordering::Acquire) + 1, std::sync::atomic::Ordering::Relaxed);
+                        len.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         producer()
                      } {
                         let worker = worker.clone();
                         let len = len.clone();
                         tx.send(task::spawn(async move {
                             let out = worker(value).await; 
-                            len.store(len.load(std::sync::atomic::Ordering::Acquire) - 1, std::sync::atomic::Ordering::Relaxed);
+                            len.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                             out
                         }))
                             .expect("Can't send new spawned worker");
@@ -201,7 +201,7 @@ mod runner {
                 spawn(async move {
                     loop {
                         if len.load(std::sync::atomic::Ordering::Acquire) < capacity {
-                            len.store(len.load(std::sync::atomic::Ordering::Acquire) + 1, std::sync::atomic::Ordering::Relaxed);
+                            len.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             match producer() {
                                 ProducerResult::ContinueWith(value) => {
                                     let worker = worker.clone();
@@ -209,7 +209,7 @@ mod runner {
                                     let tx = tx.clone();
                                     spawn(async move { 
                                         let out = worker(value).await;
-                                        len.store(len.load(std::sync::atomic::Ordering::Acquire) - 1, std::sync::atomic::Ordering::Relaxed);
+                                        len.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                                         let _ = tx.send(out);
                                     });
                                 }
